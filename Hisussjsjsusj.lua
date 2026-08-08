@@ -96,6 +96,10 @@ local PlayerSection = PlayerTab:Section({
     Title = "Local Player",
 })
 
+local AtmSection = PlayerTab:Section({
+    Title = "ATM",
+})
+
 local MopFarmEnabled = false
 local MopFarmMethod = "Legit"
 
@@ -106,6 +110,10 @@ local TweenSpeed = 25
 
 local staminaEnabled = false
 local staminaConn = nil
+
+local AtmAmount = 1000
+local AutoDepositEnabled = false
+local AutoWithdrawEnabled = false
 
 local grid = 2.5
 local radius = 1.2
@@ -405,7 +413,7 @@ local function NavigateTo(targetPos, method, checkEnabled)
         local path = smooth(rawPath)
 
         if #path <= 1 then
-            break
+            path = {startPos, validTarget}
         end
 
         draw(path)
@@ -481,8 +489,6 @@ local function NavigateTo(targetPos, method, checkEnabled)
             end
         end
 
-        clearVisuals()
-
         if not blocked or (RootPart.Position - targetPos).Magnitude < 3.5 then
             break
         end
@@ -491,6 +497,22 @@ local function NavigateTo(targetPos, method, checkEnabled)
 
     clearVisuals()
     ResetHumanoidRotation()
+end
+
+local function withdrawMoney(amount)
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local atm = remotes and remotes:FindFirstChild("ATM")
+    if atm then
+        atm:FireServer("Withdraw", amount)
+    end
+end
+
+local function depositMoney(amount)
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local atm = remotes and remotes:FindFirstChild("ATM")
+    if atm then
+        atm:FireServer("Deposit", amount)
+    end
 end
 
 local staminaRef = nil
@@ -521,6 +543,49 @@ PlayerSection:Toggle({
     end,
 })
 
+AtmSection:Slider({
+    Title = "Amount",
+    Step = 100,
+    Value = {
+        Min = 100,
+        Max = 500000,
+        Default = 1000,
+    },
+    Callback = function(Value)
+        AtmAmount = Value
+    end,
+})
+
+AtmSection:Button({
+    Title = "Withdraw",
+    Callback = function()
+        withdrawMoney(AtmAmount)
+    end,
+})
+
+AtmSection:Button({
+    Title = "Deposit",
+    Callback = function()
+        depositMoney(AtmAmount)
+    end,
+})
+
+AtmSection:Toggle({
+    Title = "Auto Withdraw",
+    Value = false,
+    Callback = function(Value)
+        AutoWithdrawEnabled = Value
+    end,
+})
+
+AtmSection:Toggle({
+    Title = "Auto Deposit",
+    Value = false,
+    Callback = function(Value)
+        AutoDepositEnabled = Value
+    end,
+})
+
 SettingSection:Slider({
     Title = "Tween Speed",
     Step = 0.1,
@@ -533,6 +598,24 @@ SettingSection:Slider({
         TweenSpeed = Value
     end,
 })
+
+task.spawn(function()
+    while true do
+        if AutoWithdrawEnabled then
+            withdrawMoney(AtmAmount)
+        end
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if AutoDepositEnabled then
+            depositMoney(AtmAmount)
+        end
+        task.wait(0.5)
+    end
+end)
 
 task.spawn(function()
     while true do
