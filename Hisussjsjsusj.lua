@@ -315,11 +315,16 @@ local function smooth(p)
 end
 
 local partPool = {}
-local function draw(p)
+
+local function clearVisuals()
     for _, part in ipairs(partPool) do
         part.Parent = nil
     end
+    vf:ClearAllChildren()
+end
 
+local function draw(p)
+    clearVisuals()
     local poolIndex = 1
     local function getPooledPart()
         local part = partPool[poolIndex]
@@ -355,13 +360,6 @@ local function draw(p)
     end
 end
 
-local function clearVisuals()
-    for _, part in ipairs(partPool) do
-        part.Parent = nil
-    end
-    vf:ClearAllChildren()
-end
-
 local function ResetHumanoidRotation()
     local Character = LocalPlayer.Character
     if not Character then return end
@@ -392,16 +390,27 @@ local function NavigateTo(targetPos, method, checkEnabled)
     ResetHumanoidRotation()
     
     if (RootPart.Position - targetPos).Magnitude < 3.5 then
+        clearVisuals()
         return
     end
 
-    local startPos = RootPart.Position
-    local validTarget = GetValidTargetPos(targetPos)
-    local rawPath = findPath(startPos, validTarget)
-    local path = smooth(rawPath)
+    local attempts = 0
+    while checkEnabled() and attempts < 3 do
+        attempts = attempts + 1
+        local startPos = RootPart.Position
+        if (startPos - targetPos).Magnitude < 3.5 then break end
 
-    if #path > 1 then
+        local validTarget = GetValidTargetPos(targetPos)
+        local rawPath = findPath(startPos, validTarget)
+        local path = smooth(rawPath)
+
+        if #path <= 1 then
+            break
+        end
+
         draw(path)
+        local blocked = false
+
         for i = 2, #path do
             if not checkEnabled() or not RootPart.Parent then break end
             
@@ -410,6 +419,12 @@ local function NavigateTo(targetPos, method, checkEnabled)
             local dist = (np - sp).Magnitude
             
             if dist < 0.2 then continue end
+
+            local obstacleHit = Workspace:Spherecast(sp + Vector3.new(0, 1.0, 0), radius, (np - sp), params)
+            if obstacleHit then
+                blocked = true
+                break
+            end
 
             if method == "Fast" then
                 local currentSpeed = math.max(TweenSpeed, 1)
@@ -420,34 +435,23 @@ local function NavigateTo(targetPos, method, checkEnabled)
                 local elapsed = 0
                 local yd = np.Y - sp.Y
                 
-                if yd > 0.5 and yd <= maxStep then
-                    local cp = sp:Lerp(np, 0.5) + Vector3.new(0, yd + 2.5, 0)
-                    while elapsed < duration do
-                        if not checkEnabled() then break end
-                        local dt = RunService.Heartbeat:Wait()
-                        elapsed = math.min(elapsed + dt, duration)
-                        local frac = elapsed / duration
-                        local bp = bezier(frac, sp, cp, np)
-                        
-                        local fHit = Workspace:Spherecast(RootPart.Position, radius, (bp - RootPart.Position), params)
-                        if not fHit then
-                            RootPart.CFrame = CFrame.lookAt(bp, bp + lookDir)
-                        end
+                while elapsed < duration do
+                    if not checkEnabled() then break end
+                    local dt = RunService.Heartbeat:Wait()
+                    elapsed = math.min(elapsed + dt, duration)
+                    local frac = elapsed / duration
+                    local nextPos = (yd > 0.5 and yd <= maxStep) and bezier(frac, sp, sp:Lerp(np, 0.5) + Vector3.new(0, yd + 2.5, 0), np) or sp:Lerp(np, frac)
+                    
+                    local midHit = Workspace:Spherecast(RootPart.Position, radius, (nextPos - RootPart.Position), params)
+                    if midHit then
+                        blocked = true
+                        break
                     end
-                else
-                    while elapsed < duration do
-                        if not checkEnabled() then break end
-                        local dt = RunService.Heartbeat:Wait()
-                        elapsed = math.min(elapsed + dt, duration)
-                        local frac = elapsed / duration
-                        local pos = sp:Lerp(np, frac)
-                        
-                        local fHit = Workspace:Spherecast(RootPart.Position, radius, (pos - RootPart.Position), params)
-                        if not fHit then
-                            RootPart.CFrame = CFrame.lookAt(pos, pos + lookDir)
-                        end
-                    end
+                    
+                    RootPart.CFrame = CFrame.lookAt(nextPos, nextPos + lookDir)
                 end
+
+                if blocked then break end
             else
                 Humanoid:MoveTo(np)
                 local reached = false
@@ -459,51 +463,33 @@ local function NavigateTo(targetPos, method, checkEnabled)
                 while not reached and checkEnabled() and timeout < 3 do
                     task.wait(0.05)
                     timeout = timeout + 0.05
+                    
+                    local moveHit = Workspace:Spherecast(RootPart.Position, radius, (np - RootPart.Position), params)
+                    if moveHit then
+                        blocked = true
+                        if conn then conn:Disconnect() end
+                        break
+                    end
+
                     if (RootPart.Position - np).Magnitude < 3 then
                         reached = true
                         break
                     end
                 end
                 if conn then conn:Disconnect() end
+                if blocked then break end
             end
         end
+
         clearVisuals()
-    else
-        if method == "Legit" then
-            Humanoid:MoveTo(targetPos)
-            local timeout = 0
-            while checkEnabled() and timeout < 3 do
-                task.wait(0.1)
-                timeout = timeout + 0.1
-                if (RootPart.Position - targetPos).Magnitude < 3.5 then break end
-            end
-        else
-            local dist = (RootPart.Position - targetPos).Magnitude
-            local dir = (targetPos - RootPart.Position).Unit
-            local rayHit = Workspace:Raycast(RootPart.Position, dir * dist, params)
-            
-            if not rayHit then
-                local duration = dist / math.max(TweenSpeed, 1)
-                local tween = TweenService:Create(RootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
-                tween:Play()
-                while tween.PlaybackState == Enum.PlaybackState.Playing do
-                    if not checkEnabled() then
-                        tween:Cancel()
-                        break
-                    end
-                    task.wait(0.05)
-                end
-            else
-                Humanoid:MoveTo(targetPos)
-                local timeout = 0
-                while checkEnabled() and timeout < 3 do
-                    task.wait(0.1)
-                    timeout = timeout + 0.1
-                    if (RootPart.Position - targetPos).Magnitude < 3.5 then break end
-                end
-            end
+
+        if not blocked or (RootPart.Position - targetPos).Magnitude < 3.5 then
+            break
         end
+        task.wait(0.1)
     end
+
+    clearVisuals()
     ResetHumanoidRotation()
 end
 
