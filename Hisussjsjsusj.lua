@@ -11,6 +11,7 @@ local TweenService = cloneref(game:GetService("TweenService"))
 local Players = cloneref(game:GetService("Players"))
 local RunService = cloneref(game:GetService("RunService"))
 local Workspace = cloneref(game:GetService("Workspace"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -100,6 +101,10 @@ local AtmSection = PlayerTab:Section({
     Title = "ATM",
 })
 
+local VehicleSection = PlayerTab:Section({
+    Title = "Vehicle",
+})
+
 local MopFarmEnabled = false
 local MopFarmMethod = "Legit"
 
@@ -114,6 +119,10 @@ local staminaConn = nil
 local AtmAmount = 1000
 local AutoDepositEnabled = false
 local AutoWithdrawEnabled = false
+
+local VehicleFlyEnabled = false
+local VehicleFlySpeed = 50
+local VehicleFlyConn = nil
 
 local grid = 2.5
 local radius = 1.2
@@ -515,6 +524,112 @@ local function depositMoney(amount)
     end
 end
 
+local function getMyVehicleSeat()
+    local vehicles = Workspace:FindFirstChild("Vehicles")
+    if not vehicles then return nil end
+    
+    for _, v in ipairs(vehicles:GetChildren()) do
+        if v.Name:lower():find(LocalPlayer.Name:lower()) then
+            local ds = v:FindFirstChild("DriveSeat")
+            if ds then return ds end
+            for _, d in ipairs(v:GetDescendants()) do
+                if d:IsA("VehicleSeat") then return d end
+            end
+        end
+    end
+    return nil
+end
+
+local function getCurrentSeat()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
+        return hum.SeatPart
+    end
+    return getMyVehicleSeat()
+end
+
+local function handleVehicleFly(enabled)
+    VehicleFlyEnabled = enabled
+    if VehicleFlyConn then
+        VehicleFlyConn:Disconnect()
+        VehicleFlyConn = nil
+    end
+
+    if not VehicleFlyEnabled then
+        local seat = getCurrentSeat()
+        if seat then
+            local model = seat:FindFirstAncestorOfClass("Model") or seat.Parent
+            local root = model:IsA("Model") and model.PrimaryPart or seat
+            if root then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+        return
+    end
+
+    VehicleFlyConn = RunService.RenderStepped:Connect(function(dt)
+        if not VehicleFlyEnabled then return end
+        local seat = getCurrentSeat()
+        if not seat then return end
+
+        local model = seat:FindFirstAncestorOfClass("Model") or seat.Parent
+        local root = (model:IsA("Model") and model.PrimaryPart) or seat
+        if not root then return end
+
+        local camera = Workspace.CurrentCamera
+        local moveDir = Vector3.zero
+
+        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+            local moveVector = Vector3.zero
+            local char = LocalPlayer.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    moveVector = hum.MoveDirection
+                end
+            end
+            if moveVector.Magnitude > 0.05 then
+                local camCFrame = camera.CFrame
+                local forward = camCFrame.LookVector
+                local right = camCFrame.RightVector
+                local flatForward = Vector3.new(forward.X, 0, forward.Z).Unit
+                local flatRight = Vector3.new(right.X, 0, right.Z).Unit
+                
+                local localZ = moveVector:Dot(flatForward)
+                local localX = moveVector:Dot(flatRight)
+                
+                moveDir = (forward * localZ) + (right * localX)
+            end
+        else
+            local look = camera.CFrame.LookVector
+            local right = camera.CFrame.RightVector
+            local up = Vector3.new(0, 1, 0)
+
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.E) or UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + up end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Q) or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - up end
+        end
+
+        if moveDir.Magnitude > 0 then
+            moveDir = moveDir.Unit
+        end
+
+        local targetVelocity = moveDir * VehicleFlySpeed
+        root.AssemblyLinearVelocity = targetVelocity
+        root.AssemblyAngularVelocity = Vector3.zero
+        
+        if moveDir.Magnitude > 0 then
+            root.CFrame = CFrame.lookAt(root.Position, root.Position + moveDir)
+        end
+    end)
+end
+
 local staminaRef = nil
 PlayerSection:Toggle({
     Title = "Inf Stamina",
@@ -583,6 +698,42 @@ AtmSection:Toggle({
     Value = false,
     Callback = function(Value)
         AutoDepositEnabled = Value
+    end,
+})
+
+VehicleSection:Toggle({
+    Title = "Vehicle Fly",
+    Value = false,
+    Callback = function(Value)
+        handleVehicleFly(Value)
+    end,
+})
+
+VehicleSection:Slider({
+    Title = "Fly Speed",
+    Step = 1,
+    Value = {
+        Min = 10,
+        Max = 300,
+        Default = 50,
+    },
+    Callback = function(Value)
+        VehicleFlySpeed = Value
+    end,
+})
+
+VehicleSection:Button({
+    Title = "Enter Own Car",
+    Callback = function()
+        local seat = getMyVehicleSeat()
+        if seat then
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
+                task.wait(0.1)
+                seat:Sit(char:FindFirstChildOfClass("Humanoid"))
+            end
+        end
     end,
 })
 
