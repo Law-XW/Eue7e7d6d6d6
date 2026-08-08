@@ -14,6 +14,7 @@ local Workspace = cloneref(game:GetService("Workspace"))
 local UserInputService = cloneref(game:GetService("UserInputService"))
 
 local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
 local WindUI
 do
@@ -69,57 +70,36 @@ local PlayerTab = Window:Tab({
     Icon = "user",
 })
 
+local EspTab = Window:Tab({
+    Title = "ESP",
+    Icon = "eye",
+})
+
 local MiscTab = Window:Tab({
     Title = "Misc",
-    Icon = "more-horizontal",
+    Icon = "chart-column",
 })
 
-local MopSection = FarmTab:Section({
-    Title = "Mop Farm",
-})
+local MopSection = FarmTab:Section({ Title = "Mop Farm" })
+MopSection:Section({ Title = "Be near the job", TextSize = 14, TextTransparency = 0.4 })
+local BoxSection = FarmTab:Section({ Title = "Box Farm" })
+BoxSection:Section({ Title = "Be near the job", TextSize = 14, TextTransparency = 0.4 })
+local SettingSection = FarmTab:Section({ Title = "Settings" })
 
-MopSection:Section({
-    Title = "Be near the job",
-    TextSize = 14,
-    TextTransparency = 0.4,
-})
+local PlayerSection = PlayerTab:Section({ Title = "Local Player" })
+local AtmSection = PlayerTab:Section({ Title = "ATM" })
+local VehicleSection = PlayerTab:Section({ Title = "Vehicle" })
 
-local BoxSection = FarmTab:Section({
-    Title = "Box Farm",
-})
+local EspToggleSection = EspTab:Section({ Title = "Toggles" })
+local EspColorsSection = EspTab:Section({ Title = "Colors" })
+local EspSettingsSection = EspTab:Section({ Title = "Settings" })
 
-BoxSection:Section({
-    Title = "Be near the job",
-    TextSize = 14,
-    TextTransparency = 0.4,
-})
-
-local SettingSection = FarmTab:Section({
-    Title = "Settings",
-})
-
-local PlayerSection = PlayerTab:Section({
-    Title = "Local Player",
-})
-
-local AtmSection = PlayerTab:Section({
-    Title = "ATM",
-})
-
-local VehicleSection = PlayerTab:Section({
-    Title = "Vehicle",
-})
-
-local TargetSection = MiscTab:Section({
-    Title = "Player Interaction",
-})
+local TargetSection = MiscTab:Section({ Title = "Player Interaction" })
 
 local MopFarmEnabled = false
 local MopFarmMethod = "Legit"
-
 local BoxFarmEnabled = false
 local BoxFarmMethod = "Legit"
-
 local TweenSpeed = 25
 
 local staminaEnabled = false
@@ -141,6 +121,526 @@ local SendMoneyAmount = 1000
 local TargetHudGui = nil
 local TargetHudConn = nil
 local SpectateConn = nil
+
+local EspConfig = {
+    Box = false,
+    BoxOutline = false,
+    Corner = false,
+    Healthbar = false,
+    Skeleton = false,
+    Name = false,
+    Distance = false,
+    HealthText = false,
+    Weapon = false,
+    Backpack = false,
+    FriendCheck = false,
+    MaxDistanceEnabled = false,
+    MaxDistance = 1000,
+    Colors = {
+        Box = Color3.fromRGB(255, 255, 255),
+        Corner = Color3.fromRGB(255, 255, 255),
+        Healthbar = Color3.fromRGB(0, 255, 0),
+        Skeleton = Color3.fromRGB(255, 255, 255),
+        Name = Color3.fromRGB(255, 255, 255),
+        Distance = Color3.fromRGB(200, 200, 200),
+        HealthText = Color3.fromRGB(255, 255, 255),
+        Weapon = Color3.fromRGB(255, 215, 0),
+        Backpack = Color3.fromRGB(180, 180, 180),
+        Friend = Color3.fromRGB(0, 255, 128),
+    }
+}
+
+local FriendsCache = {}
+local function isFriend(player)
+    if not EspConfig.FriendCheck then return false end
+    if FriendsCache[player.UserId] ~= nil then
+        return FriendsCache[player.UserId]
+    end
+    local success, res = pcall(function()
+        return LocalPlayer:IsFriendsWith(player.UserId)
+    end)
+    if success then
+        FriendsCache[player.UserId] = res
+        return res
+    end
+    return false
+end
+
+Players.PlayerRemoving:Connect(function(plr)
+    FriendsCache[plr.UserId] = nil
+end)
+
+local EspObjects = {}
+local PlayerToolCache = {}
+
+local function getPlayerTools(plr)
+    local now = os.clock()
+    if PlayerToolCache[plr] and (now - PlayerToolCache[plr].Time < 0.4) then
+        return PlayerToolCache[plr].Equipped, PlayerToolCache[plr].Backpack
+    end
+
+    local char = plr.Character
+    local equipped = "None"
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") then
+                equipped = item.Name
+                break
+            end
+        end
+    end
+
+    local tools = {}
+    local bp = plr:FindFirstChildOfClass("Backpack") or plr:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item.Name)
+            end
+        end
+    end
+
+    local bpText = #tools > 0 and ("[" .. table.concat(tools, ", ") .. "]") or "[]"
+    PlayerToolCache[plr] = { Time = now, Equipped = equipped, Backpack = bpText }
+    return equipped, bpText
+end
+
+local function createDrawing(class, properties)
+    local obj = Drawing.new(class)
+    for k, v in pairs(properties) do
+        obj[k] = v
+    end
+    return obj
+end
+
+local function removeEsp(plr)
+    PlayerToolCache[plr] = nil
+    if EspObjects[plr] then
+        for _, obj in pairs(EspObjects[plr].Drawings) do
+            if type(obj) == "table" then
+                for _, sub in pairs(obj) do
+                    if sub and sub.Remove then sub:Remove() end
+                end
+            elseif obj and obj.Remove then
+                obj:Remove()
+            end
+        end
+        EspObjects[plr] = nil
+    end
+end
+
+local function hideAllDrawings(drawings)
+    for _, d in pairs(drawings) do
+        if type(d) == "table" then
+            for _, sub in pairs(d) do sub.Visible = false end
+        else
+            d.Visible = false
+        end
+    end
+end
+
+local function setupEsp(plr)
+    if plr == LocalPlayer or EspObjects[plr] then return end
+
+    local drawings = {
+        BoxOutline = createDrawing("Square", { Thickness = 3, Color = Color3.new(0,0,0), Filled = false, Visible = false }),
+        Box = createDrawing("Square", { Thickness = 1, Color = EspConfig.Colors.Box, Filled = false, Visible = false }),
+        
+        Corners = {},
+        
+        HealthbarBackground = createDrawing("Square", { Thickness = 1, Color = Color3.new(0,0,0), Filled = true, Visible = false }),
+        Healthbar = createDrawing("Square", { Thickness = 1, Color = EspConfig.Colors.Healthbar, Filled = true, Visible = false }),
+        
+        Name = createDrawing("Text", { Size = 13, Center = true, Outline = true, Color = EspConfig.Colors.Name, Visible = false }),
+        FriendTag = createDrawing("Text", { Size = 12, Center = true, Outline = true, Color = EspConfig.Colors.Friend, Text = "[FRIEND]", Visible = false }),
+        Distance = createDrawing("Text", { Size = 12, Center = true, Outline = true, Color = EspConfig.Colors.Distance, Visible = false }),
+        HealthText = createDrawing("Text", { Size = 12, Center = true, Outline = true, Color = EspConfig.Colors.HealthText, Visible = false }),
+        Weapon = createDrawing("Text", { Size = 12, Center = true, Outline = true, Color = EspConfig.Colors.Weapon, Visible = false }),
+        Backpack = createDrawing("Text", { Size = 11, Center = true, Outline = true, Color = EspConfig.Colors.Backpack, Visible = false }),
+        
+        Skeleton = {}
+    }
+
+    for i = 1, 8 do
+        drawings.Corners[i] = createDrawing("Line", { Thickness = 1, Color = EspConfig.Colors.Corner, Visible = false })
+    end
+
+    local limbs = {
+        {"Head", "UpperTorso"},
+        {"UpperTorso", "LowerTorso"},
+        {"UpperTorso", "LeftUpperArm"},
+        {"LeftUpperArm", "LeftLowerArm"},
+        {"LeftLowerArm", "LeftHand"},
+        {"UpperTorso", "RightUpperArm"},
+        {"RightUpperArm", "RightLowerArm"},
+        {"RightLowerArm", "RightHand"},
+        {"LowerTorso", "LeftUpperLeg"},
+        {"LeftUpperLeg", "LeftLowerLeg"},
+        {"LeftLowerLeg", "LeftFoot"},
+        {"LowerTorso", "RightUpperLeg"},
+        {"RightUpperLeg", "RightLowerLeg"},
+        {"RightLowerLeg", "RightFoot"},
+        {"Head", "Torso"},
+        {"Torso", "Left Arm"},
+        {"Torso", "Right Arm"},
+        {"Torso", "Left Leg"},
+        {"Torso", "Right Leg"}
+    }
+
+    for i = 1, #limbs do
+        drawings.Skeleton[i] = createDrawing("Line", { Thickness = 1, Color = EspConfig.Colors.Skeleton, Visible = false })
+    end
+
+    EspObjects[plr] = {
+        Drawings = drawings,
+        Limbs = limbs
+    }
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then setupEsp(p) end
+end
+
+Players.PlayerAdded:Connect(setupEsp)
+Players.PlayerRemoving:Connect(removeEsp)
+
+RunService.RenderStepped:Connect(function()
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+
+    for plr, data in pairs(EspObjects) do
+        local drawings = data.Drawings
+        local char = plr.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local head = char and char:FindFirstChild("Head")
+
+        if char and root and hum and head and hum.Health > 0 then
+            local dist = (root.Position - myRoot.Position).Magnitude
+
+            if EspConfig.MaxDistanceEnabled and dist > EspConfig.MaxDistance then
+                hideAllDrawings(drawings)
+                continue
+            end
+
+            local topWorld = root.Position + Vector3.new(0, 3, 0)
+            local bottomWorld = root.Position - Vector3.new(0, 3.5, 0)
+
+            local topPos, topOnScreen = Camera:WorldToViewportPoint(topWorld)
+            local bottomPos, bottomOnScreen = Camera:WorldToViewportPoint(bottomWorld)
+            local rootPos, rootOnScreen = Camera:WorldToViewportPoint(root.Position)
+
+            if rootOnScreen or topOnScreen or bottomOnScreen then
+                local boxHeight = math.clamp(math.abs(topPos.Y - bottomPos.Y), 8, 2000)
+                local boxWidth = math.clamp(boxHeight * 0.6, 6, 1200)
+                local boxX = rootPos.X - (boxWidth / 2)
+                local boxY = topPos.Y
+
+                local isFriendPlayer = isFriend(plr)
+                local baseColor = isFriendPlayer and EspConfig.Colors.Friend or nil
+
+                if EspConfig.Box then
+                    drawings.Box.Size = Vector2.new(boxWidth, boxHeight)
+                    drawings.Box.Position = Vector2.new(boxX, boxY)
+                    drawings.Box.Color = baseColor or EspConfig.Colors.Box
+                    drawings.Box.Visible = true
+
+                    if EspConfig.BoxOutline then
+                        drawings.BoxOutline.Size = Vector2.new(boxWidth, boxHeight)
+                        drawings.BoxOutline.Position = Vector2.new(boxX, boxY)
+                        drawings.BoxOutline.Visible = true
+                    else
+                        drawings.BoxOutline.Visible = false
+                    end
+                else
+                    drawings.Box.Visible = false
+                    drawings.BoxOutline.Visible = false
+                end
+
+                if EspConfig.Corner then
+                    local lineLen = math.clamp(boxWidth * 0.25, 2, 50)
+                    local col = baseColor or EspConfig.Colors.Corner
+
+                    local c = drawings.Corners
+                    c[1].From = Vector2.new(boxX, boxY); c[1].To = Vector2.new(boxX + lineLen, boxY)
+                    c[2].From = Vector2.new(boxX, boxY); c[2].To = Vector2.new(boxX, boxY + lineLen)
+                    c[3].From = Vector2.new(boxX + boxWidth, boxY); c[3].To = Vector2.new(boxX + boxWidth - lineLen, boxY)
+                    c[4].From = Vector2.new(boxX + boxWidth, boxY); c[4].To = Vector2.new(boxX + boxWidth, boxY + lineLen)
+                    c[5].From = Vector2.new(boxX, boxY + boxHeight); c[5].To = Vector2.new(boxX + lineLen, boxY + boxHeight)
+                    c[6].From = Vector2.new(boxX, boxY + boxHeight); c[6].To = Vector2.new(boxX, boxY + boxHeight - lineLen)
+                    c[7].From = Vector2.new(boxX + boxWidth, boxY + boxHeight); c[7].To = Vector2.new(boxX + boxWidth - lineLen, boxY + boxHeight)
+                    c[8].From = Vector2.new(boxX + boxWidth, boxY + boxHeight); c[8].To = Vector2.new(boxX + boxWidth, boxY + boxHeight - lineLen)
+
+                    for i = 1, 8 do
+                        c[i].Color = col
+                        c[i].Visible = true
+                    end
+                else
+                    for i = 1, 8 do drawings.Corners[i].Visible = false end
+                end
+
+                if EspConfig.Healthbar then
+                    local healthPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                    local barHeight = boxHeight * healthPct
+                    local barX = boxX - 6
+
+                    drawings.HealthbarBackground.Size = Vector2.new(3, boxHeight + 2)
+                    drawings.HealthbarBackground.Position = Vector2.new(barX - 1, boxY - 1)
+                    drawings.HealthbarBackground.Visible = true
+
+                    drawings.Healthbar.Size = Vector2.new(1, barHeight)
+                    drawings.Healthbar.Position = Vector2.new(barX, boxY + (boxHeight - barHeight))
+                    drawings.Healthbar.Color = baseColor or Color3.fromRGB(255 - (255 * healthPct), 255 * healthPct, 0)
+                    drawings.Healthbar.Visible = true
+                else
+                    drawings.Healthbar.Visible = false
+                    drawings.HealthbarBackground.Visible = false
+                end
+
+                local topOffset = 2
+                if isFriendPlayer then
+                    drawings.FriendTag.Position = Vector2.new(rootPos.X, boxY - 14 - topOffset)
+                    drawings.FriendTag.Color = EspConfig.Colors.Friend
+                    drawings.FriendTag.Visible = true
+                    topOffset = topOffset + 14
+                else
+                    drawings.FriendTag.Visible = false
+                end
+
+                if EspConfig.Name then
+                    drawings.Name.Position = Vector2.new(rootPos.X, boxY - 14 - topOffset)
+                    drawings.Name.Text = plr.Name
+                    drawings.Name.Color = baseColor or EspConfig.Colors.Name
+                    drawings.Name.Visible = true
+                else
+                    drawings.Name.Visible = false
+                end
+
+                local bottomOffset = 2
+                if EspConfig.Distance then
+                    drawings.Distance.Position = Vector2.new(rootPos.X, boxY + boxHeight + bottomOffset)
+                    drawings.Distance.Text = string.format("%dm", math.floor(dist))
+                    drawings.Distance.Color = baseColor or EspConfig.Colors.Distance
+                    drawings.Distance.Visible = true
+                    bottomOffset = bottomOffset + 13
+                else
+                    drawings.Distance.Visible = false
+                end
+
+                if EspConfig.HealthText then
+                    drawings.HealthText.Position = Vector2.new(rootPos.X, boxY + boxHeight + bottomOffset)
+                    drawings.HealthText.Text = string.format("%d HP", math.floor(hum.Health))
+                    drawings.HealthText.Color = baseColor or EspConfig.Colors.HealthText
+                    drawings.HealthText.Visible = true
+                    bottomOffset = bottomOffset + 13
+                else
+                    drawings.HealthText.Visible = false
+                end
+
+                local equippedTool, bpText = "None", "[]"
+                if EspConfig.Weapon or EspConfig.Backpack then
+                    equippedTool, bpText = getPlayerTools(plr)
+                end
+
+                if EspConfig.Weapon then
+                    drawings.Weapon.Position = Vector2.new(rootPos.X, boxY + boxHeight + bottomOffset)
+                    drawings.Weapon.Text = equippedTool
+                    drawings.Weapon.Color = baseColor or EspConfig.Colors.Weapon
+                    drawings.Weapon.Visible = true
+                    bottomOffset = bottomOffset + 13
+                else
+                    drawings.Weapon.Visible = false
+                end
+
+                if EspConfig.Backpack then
+                    drawings.Backpack.Position = Vector2.new(rootPos.X, boxY + boxHeight + bottomOffset)
+                    drawings.Backpack.Text = bpText
+                    drawings.Backpack.Color = baseColor or EspConfig.Colors.Backpack
+                    drawings.Backpack.Visible = true
+                else
+                    drawings.Backpack.Visible = false
+                end
+
+                if EspConfig.Skeleton then
+                    local skelColor = baseColor or EspConfig.Colors.Skeleton
+                    for i, pair in ipairs(data.Limbs) do
+                        local part1 = char:FindFirstChild(pair[1])
+                        local part2 = char:FindFirstChild(pair[2])
+                        local line = drawings.Skeleton[i]
+
+                        if part1 and part2 and line then
+                            local pos1, vis1 = Camera:WorldToViewportPoint(part1.Position)
+                            local pos2, vis2 = Camera:WorldToViewportPoint(part2.Position)
+
+                            if vis1 and vis2 then
+                                line.From = Vector2.new(pos1.X, pos1.Y)
+                                line.To = Vector2.new(pos2.X, pos2.Y)
+                                line.Color = skelColor
+                                line.Visible = true
+                            else
+                                line.Visible = false
+                            end
+                        elseif line then
+                            line.Visible = false
+                        end
+                    end
+                else
+                    for i = 1, #drawings.Skeleton do
+                        drawings.Skeleton[i].Visible = false
+                    end
+                end
+            else
+                hideAllDrawings(drawings)
+            end
+        else
+            hideAllDrawings(drawings)
+        end
+    end
+end)
+
+EspToggleSection:Toggle({
+    Title = "Box ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Box = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Box Outline",
+    Value = false,
+    Callback = function(v) EspConfig.BoxOutline = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Corner Box ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Corner = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Healthbar ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Healthbar = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Skeleton ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Skeleton = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Name ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Name = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Distance ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Distance = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Health Text ESP",
+    Value = false,
+    Callback = function(v) EspConfig.HealthText = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Weapon ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Weapon = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Backpack ESP",
+    Value = false,
+    Callback = function(v) EspConfig.Backpack = v end
+})
+
+EspToggleSection:Toggle({
+    Title = "Friend Check",
+    Value = false,
+    Callback = function(v) EspConfig.FriendCheck = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Box Color",
+    Default = EspConfig.Colors.Box,
+    Callback = function(v) EspConfig.Colors.Box = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Corner Color",
+    Default = EspConfig.Colors.Corner,
+    Callback = function(v) EspConfig.Colors.Corner = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Healthbar Color",
+    Default = EspConfig.Colors.Healthbar,
+    Callback = function(v) EspConfig.Colors.Healthbar = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Skeleton Color",
+    Default = EspConfig.Colors.Skeleton,
+    Callback = function(v) EspConfig.Colors.Skeleton = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Name Color",
+    Default = EspConfig.Colors.Name,
+    Callback = function(v) EspConfig.Colors.Name = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Distance Color",
+    Default = EspConfig.Colors.Distance,
+    Callback = function(v) EspConfig.Colors.Distance = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Health Text Color",
+    Default = EspConfig.Colors.HealthText,
+    Callback = function(v) EspConfig.Colors.HealthText = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Weapon Color",
+    Default = EspConfig.Colors.Weapon,
+    Callback = function(v) EspConfig.Colors.Weapon = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Backpack Color",
+    Default = EspConfig.Colors.Backpack,
+    Callback = function(v) EspConfig.Colors.Backpack = v end
+})
+
+EspColorsSection:Colorpicker({
+    Title = "Friend Color",
+    Default = EspConfig.Colors.Friend,
+    Callback = function(v) EspConfig.Colors.Friend = v end
+})
+
+EspSettingsSection:Toggle({
+    Title = "Enable Max Distance",
+    Value = false,
+    Callback = function(v) EspConfig.MaxDistanceEnabled = v end
+})
+
+EspSettingsSection:Slider({
+    Title = "Max Distance",
+    Step = 10,
+    Value = {
+        Min = 50,
+        Max = 5000,
+        Default = 1000,
+    },
+    Callback = function(v) EspConfig.MaxDistance = v end
+})
 
 local grid = 2.5
 local radius = 1.2
@@ -793,30 +1293,9 @@ local function handleTargetHud(enabled)
                 elements.DistLbl.Text = "Distance: N/A"
             end
 
-            local equipped = "None"
-            for _, item in ipairs(char:GetChildren()) do
-                if item:IsA("Tool") then
-                    equipped = item.Name
-                    break
-                end
-            end
+            local equipped, bpText = getPlayerTools(target)
             elements.EquipLbl.Text = "Equipped: " .. equipped
-
-            local bpTools = {}
-            local bp = target:FindFirstChildOfClass("Backpack") or target:FindFirstChild("Backpack")
-            if bp then
-                for _, item in ipairs(bp:GetChildren()) do
-                    if item:IsA("Tool") then
-                        table.insert(bpTools, item.Name)
-                    end
-                end
-            end
-
-            if #bpTools > 0 then
-                elements.BackpackLbl.Text = "Backpack: " .. table.concat(bpTools, ", ")
-            else
-                elements.BackpackLbl.Text = "Backpack: None"
-            end
+            elements.BackpackLbl.Text = "Backpack: " .. bpText
         else
             elements.HpLbl.Text = "Health: Dead"
             elements.DistLbl.Text = "Distance: N/A"
