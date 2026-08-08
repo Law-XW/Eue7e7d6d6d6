@@ -107,8 +107,8 @@ local TweenSpeed = 25
 local staminaEnabled = false
 local staminaConn = nil
 
-local grid = 3
-local radius = 1.0
+local grid = 2.5
+local radius = 1.2
 local heightOffset = 2.5
 local maxStep = 3.5
 local maxDrop = 15
@@ -175,7 +175,7 @@ local function checkClearance(p1, p2)
     
     local dir = vec.Unit
     local h1 = Workspace:Spherecast(p1 + Vector3.new(0, 1.0, 0), radius, dir * dist, params)
-    local h2 = Workspace:Spherecast(p1 + Vector3.new(0, 2.8, 0), radius, dir * dist, params)
+    local h2 = Workspace:Spherecast(p1 + Vector3.new(0, 2.5, 0), radius, dir * dist, params)
     
     return not h1 and not h2
 end
@@ -186,7 +186,7 @@ local function getGround(pos)
         return groundCache[k] or nil
     end
     
-    local ray = Workspace:Raycast(pos + Vector3.new(0, maxStep, 0), Vector3.new(0, -(maxStep + maxDrop), 0), params)
+    local ray = Workspace:Raycast(pos + Vector3.new(0, maxStep + 2, 0), Vector3.new(0, -(maxStep + maxDrop + 5), 0), params)
     if ray then
         local res = ray.Position + Vector3.new(0, heightOffset, 0)
         groundCache[k] = res
@@ -215,8 +215,7 @@ local function findPath(start, dest)
     
     while #h > 0 do
         runs = runs + 1
-        if runs > 1200 then break end
-        if runs % 250 == 0 then task.wait() end
+        if runs > 2000 then break end
         
         local ck = pop(h, f)
         if cl[ck] then continue end
@@ -357,6 +356,9 @@ local function draw(p)
 end
 
 local function clearVisuals()
+    for _, part in ipairs(partPool) do
+        part.Parent = nil
+    end
     vf:ClearAllChildren()
 end
 
@@ -372,6 +374,14 @@ local function ResetHumanoidRotation()
     end
 end
 
+local function GetValidTargetPos(targetPos)
+    local ground = getGround(targetPos)
+    if ground then
+        return ground
+    end
+    return targetPos
+end
+
 local function NavigateTo(targetPos, method, checkEnabled)
     local Character = LocalPlayer.Character
     if not Character then return end
@@ -381,11 +391,13 @@ local function NavigateTo(targetPos, method, checkEnabled)
 
     ResetHumanoidRotation()
     
-    if (RootPart.Position - targetPos).Magnitude < 3 then
+    if (RootPart.Position - targetPos).Magnitude < 3.5 then
         return
     end
 
-    local rawPath = findPath(RootPart.Position, targetPos)
+    local startPos = RootPart.Position
+    local validTarget = GetValidTargetPos(targetPos)
+    local rawPath = findPath(startPos, validTarget)
     local path = smooth(rawPath)
 
     if #path > 1 then
@@ -416,7 +428,11 @@ local function NavigateTo(targetPos, method, checkEnabled)
                         elapsed = math.min(elapsed + dt, duration)
                         local frac = elapsed / duration
                         local bp = bezier(frac, sp, cp, np)
-                        RootPart.CFrame = CFrame.lookAt(bp, bp + lookDir)
+                        
+                        local fHit = Workspace:Spherecast(RootPart.Position, radius, (bp - RootPart.Position), params)
+                        if not fHit then
+                            RootPart.CFrame = CFrame.lookAt(bp, bp + lookDir)
+                        end
                     end
                 else
                     while elapsed < duration do
@@ -425,7 +441,11 @@ local function NavigateTo(targetPos, method, checkEnabled)
                         elapsed = math.min(elapsed + dt, duration)
                         local frac = elapsed / duration
                         local pos = sp:Lerp(np, frac)
-                        RootPart.CFrame = CFrame.lookAt(pos, pos + lookDir)
+                        
+                        local fHit = Workspace:Spherecast(RootPart.Position, radius, (pos - RootPart.Position), params)
+                        if not fHit then
+                            RootPart.CFrame = CFrame.lookAt(pos, pos + lookDir)
+                        end
                     end
                 end
             else
@@ -436,7 +456,7 @@ local function NavigateTo(targetPos, method, checkEnabled)
                 end)
                 
                 local timeout = 0
-                while not reached and checkEnabled() and timeout < 4 do
+                while not reached and checkEnabled() and timeout < 3 do
                     task.wait(0.05)
                     timeout = timeout + 0.05
                     if (RootPart.Position - np).Magnitude < 3 then
@@ -452,22 +472,35 @@ local function NavigateTo(targetPos, method, checkEnabled)
         if method == "Legit" then
             Humanoid:MoveTo(targetPos)
             local timeout = 0
-            while checkEnabled() and timeout < 4 do
+            while checkEnabled() and timeout < 3 do
                 task.wait(0.1)
                 timeout = timeout + 0.1
-                if (RootPart.Position - targetPos).Magnitude < 3 then break end
+                if (RootPart.Position - targetPos).Magnitude < 3.5 then break end
             end
         else
             local dist = (RootPart.Position - targetPos).Magnitude
-            local duration = dist / math.max(TweenSpeed, 1)
-            local tween = TweenService:Create(RootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
-            tween:Play()
-            while tween.PlaybackState == Enum.PlaybackState.Playing do
-                if not checkEnabled() then
-                    tween:Cancel()
-                    break
+            local dir = (targetPos - RootPart.Position).Unit
+            local rayHit = Workspace:Raycast(RootPart.Position, dir * dist, params)
+            
+            if not rayHit then
+                local duration = dist / math.max(TweenSpeed, 1)
+                local tween = TweenService:Create(RootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
+                tween:Play()
+                while tween.PlaybackState == Enum.PlaybackState.Playing do
+                    if not checkEnabled() then
+                        tween:Cancel()
+                        break
+                    end
+                    task.wait(0.05)
                 end
-                task.wait(0.05)
+            else
+                Humanoid:MoveTo(targetPos)
+                local timeout = 0
+                while checkEnabled() and timeout < 3 do
+                    task.wait(0.1)
+                    timeout = timeout + 0.1
+                    if (RootPart.Position - targetPos).Magnitude < 3.5 then break end
+                end
             end
         end
     end
@@ -535,17 +568,18 @@ task.spawn(function()
                         NavigateTo(targetPos, MopFarmMethod, function() return MopFarmEnabled end)
 
                         if MopFarmEnabled and prompt and item.Parent then
-                            task.wait(0.2)
+                            task.wait(0.1)
                             fireproximityprompt(prompt)
-                            task.wait(0.4)
+                            task.wait(0.3)
                         end
                     end
                 end
             end
+            task.wait(0.1)
         else
             clearVisuals()
+            task.wait(0.2)
         end
-        task.wait(0.5)
     end
 end)
 
@@ -566,9 +600,9 @@ task.spawn(function()
                     and Workspace.Map.Jobs.BoxJob.Take.Take:FindFirstChild("Interact")
 
                 if takePrompt then
-                    task.wait(0.2)
+                    task.wait(0.1)
                     fireproximityprompt(takePrompt)
-                    task.wait(0.4)
+                    task.wait(0.3)
                 end
             end
 
@@ -584,16 +618,17 @@ task.spawn(function()
                         and Workspace.Map.Jobs.BoxJob.Deliver.Deliver:FindFirstChild("Interact")
 
                     if deliverPrompt then
-                        task.wait(0.2)
+                        task.wait(0.1)
                         fireproximityprompt(deliverPrompt)
-                        task.wait(0.4)
+                        task.wait(0.3)
                     end
                 end
             end
+            task.wait(0.1)
         else
             clearVisuals()
+            task.wait(0.2)
         end
-        task.wait(0.5)
     end
 end)
 
