@@ -69,6 +69,11 @@ local PlayerTab = Window:Tab({
     Icon = "user",
 })
 
+local MiscTab = Window:Tab({
+    Title = "Misc",
+    Icon = "more-horizontal",
+})
+
 local MopSection = FarmTab:Section({
     Title = "Mop Farm",
 })
@@ -105,6 +110,10 @@ local VehicleSection = PlayerTab:Section({
     Title = "Vehicle",
 })
 
+local TargetSection = MiscTab:Section({
+    Title = "Player Interaction",
+})
+
 local MopFarmEnabled = false
 local MopFarmMethod = "Legit"
 
@@ -123,6 +132,15 @@ local AutoWithdrawEnabled = false
 local VehicleFlyEnabled = false
 local VehicleFlySpeed = 50
 local VehicleFlyConn = nil
+
+local SelectedPlayerName = ""
+local TargetHudEnabled = false
+local SpectateEnabled = false
+local SendMoneyAmount = 1000
+
+local TargetHudGui = nil
+local TargetHudConn = nil
+local SpectateConn = nil
 
 local grid = 2.5
 local radius = 1.2
@@ -540,14 +558,14 @@ local function getMyVehicleSeat()
     return nil
 end
 
-local function getCurrentSeat()
+local function getCurrentSittingSeat()
     local char = LocalPlayer.Character
     if not char then return nil end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum and hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
         return hum.SeatPart
     end
-    return getMyVehicleSeat()
+    return nil
 end
 
 local function handleVehicleFly(enabled)
@@ -558,7 +576,7 @@ local function handleVehicleFly(enabled)
     end
 
     if not VehicleFlyEnabled then
-        local seat = getCurrentSeat()
+        local seat = getCurrentSittingSeat()
         if seat then
             local model = seat:FindFirstAncestorOfClass("Model") or seat.Parent
             local root = model:IsA("Model") and model.PrimaryPart or seat
@@ -572,7 +590,7 @@ local function handleVehicleFly(enabled)
 
     VehicleFlyConn = RunService.RenderStepped:Connect(function(dt)
         if not VehicleFlyEnabled then return end
-        local seat = getCurrentSeat()
+        local seat = getCurrentSittingSeat()
         if not seat then return end
 
         local model = seat:FindFirstAncestorOfClass("Model") or seat.Parent
@@ -629,6 +647,296 @@ local function handleVehicleFly(enabled)
         end
     end)
 end
+
+local function getPlayerNames()
+    local names = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(names, p.Name)
+        end
+    end
+    if #names == 0 then
+        table.insert(names, "None")
+    end
+    return names
+end
+
+local function getSelectedPlayerObj()
+    if SelectedPlayerName == "" or SelectedPlayerName == "None" then return nil end
+    return Players:FindFirstChild(SelectedPlayerName)
+end
+
+local function createTargetHudGui()
+    if TargetHudGui then
+        TargetHudGui:Destroy()
+        TargetHudGui = nil
+    end
+
+    local guiParent = (gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
+    
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "TargetHudGui"
+    sg.ResetOnSpawn = false
+
+    local frame = Instance.new("Frame")
+    frame.Name = "TargetHudFrame"
+    frame.Size = UDim2.new(0, 240, 0, 160)
+    frame.Position = UDim2.new(0.75, 0, 0.35, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = sg
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(48, 255, 106)
+    stroke.Thickness = 1.5
+    stroke.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 28)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "TargetHud"
+    title.TextColor3 = Color3.fromRGB(48, 255, 106)
+    title.TextSize = 16
+    title.Font = Enum.Font.GothamBold
+    title.Parent = frame
+
+    local function createLabel(posY, text)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -20, 0, 22)
+        lbl.Position = UDim2.new(0, 10, 0, posY)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = text
+        lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+        lbl.TextSize = 13
+        lbl.Font = Enum.Font.GothamMedium
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+        return lbl
+    end
+
+    local nameLbl = createLabel(32, "Name: None")
+    local hpLbl = createLabel(56, "Health: 0 / 0")
+    local distLbl = createLabel(80, "Distance: 0m")
+    local equipLbl = createLabel(104, "Equipped: None")
+    local backpackLbl = createLabel(128, "Backpack: None")
+
+    sg.Parent = guiParent
+    TargetHudGui = sg
+
+    return {
+        NameLbl = nameLbl,
+        HpLbl = hpLbl,
+        DistLbl = distLbl,
+        EquipLbl = equipLbl,
+        BackpackLbl = backpackLbl,
+    }
+end
+
+local function handleTargetHud(enabled)
+    TargetHudEnabled = enabled
+
+    if TargetHudConn then
+        TargetHudConn:Disconnect()
+        TargetHudConn = nil
+    end
+
+    if not TargetHudEnabled then
+        if TargetHudGui then
+            TargetHudGui:Destroy()
+            TargetHudGui = nil
+        end
+        return
+    end
+
+    local elements = createTargetHudGui()
+
+    TargetHudConn = RunService.RenderStepped:Connect(function()
+        if not TargetHudEnabled then return end
+
+        local target = getSelectedPlayerObj()
+        if not target then
+            elements.NameLbl.Text = "Name: None"
+            elements.HpLbl.Text = "Health: N/A"
+            elements.DistLbl.Text = "Distance: N/A"
+            elements.EquipLbl.Text = "Equipped: None"
+            elements.BackpackLbl.Text = "Backpack: None"
+            return
+        end
+
+        elements.NameLbl.Text = "Name: " .. target.Name
+
+        local char = target.Character
+        local myChar = LocalPlayer.Character
+
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                elements.HpLbl.Text = string.format("Health: %d / %d", math.floor(hum.Health), math.floor(hum.MaxHealth))
+            else
+                elements.HpLbl.Text = "Health: N/A"
+            end
+
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if root and myRoot then
+                local dist = (root.Position - myRoot.Position).Magnitude
+                elements.DistLbl.Text = string.format("Distance: %dm", math.floor(dist))
+            else
+                elements.DistLbl.Text = "Distance: N/A"
+            end
+
+            local equipped = "None"
+            for _, item in ipairs(char:GetChildren()) do
+                if item:IsA("Tool") then
+                    equipped = item.Name
+                    break
+                end
+            end
+            elements.EquipLbl.Text = "Equipped: " .. equipped
+
+            local bpTools = {}
+            local bp = target:FindFirstChildOfClass("Backpack") or target:FindFirstChild("Backpack")
+            if bp then
+                for _, item in ipairs(bp:GetChildren()) do
+                    if item:IsA("Tool") then
+                        table.insert(bpTools, item.Name)
+                    end
+                end
+            end
+
+            if #bpTools > 0 then
+                elements.BackpackLbl.Text = "Backpack: " .. table.concat(bpTools, ", ")
+            else
+                elements.BackpackLbl.Text = "Backpack: None"
+            end
+        else
+            elements.HpLbl.Text = "Health: Dead"
+            elements.DistLbl.Text = "Distance: N/A"
+            elements.EquipLbl.Text = "Equipped: None"
+            elements.BackpackLbl.Text = "Backpack: None"
+        end
+    end)
+end
+
+local function handleSpectate(enabled)
+    SpectateEnabled = enabled
+
+    if SpectateConn then
+        SpectateConn:Disconnect()
+        SpectateConn = nil
+    end
+
+    if not SpectateEnabled then
+        local myChar = LocalPlayer.Character
+        if myChar then
+            local hum = myChar:FindFirstChildOfClass("Humanoid")
+            if hum then
+                Workspace.CurrentCamera.CameraSubject = hum
+            end
+        end
+        return
+    end
+
+    SpectateConn = RunService.RenderStepped:Connect(function()
+        if not SpectateEnabled then return end
+        local target = getSelectedPlayerObj()
+        if target and target.Character then
+            local hum = target.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                Workspace.CurrentCamera.CameraSubject = hum
+                return
+            end
+        end
+
+        local myChar = LocalPlayer.Character
+        if myChar then
+            local hum = myChar:FindFirstChildOfClass("Humanoid")
+            if hum then
+                Workspace.CurrentCamera.CameraSubject = hum
+            end
+        end
+    end)
+end
+
+local function sendMoneyToTarget()
+    local target = getSelectedPlayerObj()
+    if not target then return end
+
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local phoneRemote = remotes and remotes:FindFirstChild("Phone")
+    if phoneRemote then
+        phoneRemote:FireServer("SendMoney", target, SendMoneyAmount)
+    end
+end
+
+local playerDropdown = TargetSection:Dropdown({
+    Title = "Select Player",
+    Values = getPlayerNames(),
+    Value = getPlayerNames()[1] or "None",
+    Callback = function(Value)
+        SelectedPlayerName = type(Value) == "table" and Value[1] or Value
+    end,
+})
+
+local function updatePlayerDropdown()
+    local names = getPlayerNames()
+    if playerDropdown and playerDropdown.SetValues then
+        playerDropdown:SetValues(names)
+    end
+end
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.5)
+    updatePlayerDropdown()
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.5)
+    updatePlayerDropdown()
+end)
+
+TargetSection:Toggle({
+    Title = "TargetHud",
+    Value = false,
+    Callback = function(Value)
+        handleTargetHud(Value)
+    end,
+})
+
+TargetSection:Toggle({
+    Title = "Spectate Player",
+    Value = false,
+    Callback = function(Value)
+        handleSpectate(Value)
+    end,
+})
+
+TargetSection:Input({
+    Title = "Send Money Amount",
+    Default = "1000",
+    Placeholder = "Enter amount...",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num then
+            SendMoneyAmount = num
+        end
+    end,
+})
+
+TargetSection:Button({
+    Title = "Send Money",
+    Callback = function()
+        sendMoneyToTarget()
+    end,
+})
 
 local staminaRef = nil
 PlayerSection:Toggle({
