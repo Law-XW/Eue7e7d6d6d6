@@ -97,7 +97,7 @@ local SAHighlightTarget = false
 local SASnapline = false
 local SAWallCheck = false
 local SATeamCheck = false
-local SAIgnoreWanted = false
+local SAIgnoreWanted = true
 local SAIgnoreUntouchable = false
 local BulletTracersEnabled = false
 local TracerColor = Color3.fromRGB(255, 105, 180)
@@ -143,7 +143,7 @@ targetHighlight.FillTransparency = 0.5
 targetHighlight.OutlineTransparency = 0
 
 local function isWantedPlayer(plr)
-    if not plr.Character then return false end
+    if not plr or not plr.Character then return false end
     local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
     if hrp then
         for _, n in ipairs({"IsWanted", "Wanted", "WantedLevel", "WantedStars"}) do
@@ -168,6 +168,12 @@ local function getClosestSATarget()
     local localTeam = LP.Team
     local isPolice = localTeam and (localTeam.Name == "Police" or localTeam.Name == "Polizei")
 
+    local rayParams
+    if SAWallCheck then
+        rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    end
+
     for _, plr in pairs(Players:GetPlayers()) do
         if plr ~= LP and plr.Character then
             local part = plr.Character:FindFirstChild(SAaimPart) or plr.Character:FindFirstChild("HumanoidRootPart")
@@ -178,24 +184,9 @@ local function getClosestSATarget()
                     skip = true
                 end
                 if not skip and SAIgnoreUntouchable and plr.Team then
-                    local untouchable = {
-                        Teams:FindFirstChild("Prisoner"),
-                        Teams:FindFirstChild("TruckCompany"),
-                        Teams:FindFirstChild("HARS"),
-                        Teams:FindFirstChild("FireDepartment"),
-                        Teams:FindFirstChild("BusCompany")
-                    }
-                    for _, t in ipairs(untouchable) do
-                        if t and plr.Team == t then
-                            skip = true
-                            break
-                        end
-                    end
-                    if not skip then
-                        local tn = plr.Team.Name
-                        if tn == "Prisoner" or tn == "TruckCompany" or tn == "HARS" or tn == "FireDepartment" or tn == "BusCompany" then
-                            skip = true
-                        end
+                    local tn = plr.Team.Name
+                    if tn == "Prisoner" or tn == "TruckCompany" or tn == "HARS" or tn == "FireDepartment" or tn == "BusCompany" then
+                        skip = true
                     end
                 end
                 if not skip and not SAIgnoreWanted then
@@ -207,21 +198,19 @@ local function getClosestSATarget()
                         if not targetIsWanted and not targetIsPolice then skip = true end
                     end
                 end
-                if not skip and SAWallCheck then
-                    local rp = RaycastParams.new()
-                    rp.FilterType = Enum.RaycastFilterType.Exclude
+                if not skip and SAWallCheck and rayParams then
                     local bl = {LP.Character, plr.Character}
                     local vehiclesFolder = Workspace:FindFirstChild("Vehicles")
                     if vehiclesFolder then table.insert(bl, vehiclesFolder) end
-                    rp.FilterDescendantsInstances = bl
-                    local r = Workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, rp)
+                    rayParams.FilterDescendantsInstances = bl
+                    local r = Workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, rayParams)
                     if r then skip = true end
                 end
                 if not skip then
                     local sp, onScreen = cam:WorldToViewportPoint(part.Position)
                     if onScreen and sp.Z > 0 then
                         local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                        if sd < bestDist then
+                        if sd <= bestDist then
                             bestDist = sd
                             bestChar = plr.Character
                             bestScreen = Vector2.new(sp.X, sp.Y)
@@ -851,18 +840,14 @@ local espTeamColor = false
 local espTeamCheck = false
 local espMaxDistance = 15000
 
-local function createPlayerESP(player)
-    if player == LP then return end
+local function getOrCreateESP(p)
+    if p == LP or not p.Character then return nil end
+    local head = p.Character:FindFirstChild("Head")
+    if not head then return nil end
 
-    local function setupCharacter(char)
-        if not char then return end
-        local head = char:WaitForChild("Head", 5)
-        if not head then return end
-
-        local existing = head:FindFirstChild("PlayerESPGui")
-        if existing then existing:Destroy() end
-
-        local bgui = Instance.new("BillboardGui")
+    local bgui = head:FindFirstChild("PlayerESPGui")
+    if not bgui then
+        bgui = Instance.new("BillboardGui")
         bgui.Name = "PlayerESPGui"
         bgui.Adornee = head
         bgui.Size = UDim2.new(0, 200, 0, 100)
@@ -884,84 +869,74 @@ local function createPlayerESP(player)
         txt.RichText = true
         txt.Parent = bgui
     end
-
-    player.CharacterAdded:Connect(setupCharacter)
-    if player.Character then
-        setupCharacter(player.Character)
-    end
+    return bgui
 end
-
-for _, p in ipairs(Players:GetPlayers()) do
-    createPlayerESP(p)
-end
-Players.PlayerAdded:Connect(createPlayerESP)
 
 RunService.RenderStepped:Connect(function()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LP and p.Character then
             local char = p.Character
-            local head = char:FindFirstChild("Head")
             local hum = char:FindFirstChildOfClass("Humanoid")
             local hrp = char:FindFirstChild("HumanoidRootPart")
-            local bgui = head and head:FindFirstChild("PlayerESPGui")
 
-            if bgui and hum and hrp and hum.Health > 0 then
-                local myChar = LP.Character
-                local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if hum and hrp and hum.Health > 0 then
+                local bgui = getOrCreateESP(p)
+                if bgui then
+                    local myChar = LP.Character
+                    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-                local isVisible = espEnabled
-                if isVisible and espTeamCheck and p.Team and LP.Team and p.Team == LP.Team then
-                    isVisible = false
-                end
-
-                local dist = 0
-                if myHRP then
-                    dist = (myHRP.Position - hrp.Position).Magnitude
-                    if dist > espMaxDistance then
+                    local isVisible = espEnabled
+                    if isVisible and espTeamCheck and p.Team and LP.Team and p.Team == LP.Team then
                         isVisible = false
                     end
-                end
 
-                bgui.Enabled = isVisible
+                    local dist = 0
+                    if myHRP then
+                        dist = (myHRP.Position - hrp.Position).Magnitude
+                        if dist > espMaxDistance then
+                            isVisible = false
+                        end
+                    end
 
-                if isVisible then
-                    local txtLabel = bgui:FindFirstChild("ESPLabel")
-                    if txtLabel then
-                        local isWanted = isWantedPlayer(p)
+                    bgui.Enabled = isVisible
 
-                        if espWanted and isWanted then
-                            txtLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-                        elseif espTeamColor and p.Team then
-                            txtLabel.TextColor3 = p.TeamColor.Color
-                        else
-                            txtLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        end
+                    if isVisible then
+                        local txtLabel = bgui:FindFirstChild("ESPLabel")
+                        if txtLabel then
+                            local isWanted = isWantedPlayer(p)
 
-                        local lines = {}
-                        if espName then
-                            table.insert(lines, p.DisplayName or p.Name)
+                            if espWanted and isWanted then
+                                txtLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+                            elseif espTeamColor and p.Team then
+                                txtLabel.TextColor3 = p.TeamColor.Color
+                            else
+                                txtLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            end
+
+                            local lines = {}
+                            if espName then
+                                table.insert(lines, p.DisplayName or p.Name)
+                            end
+                            if espWanted and isWanted then
+                                table.insert(lines, '<font color="rgb(255,255,0)">[WANTED]</font>')
+                            end
+                            if espTeam then
+                                table.insert(lines, "Team: " .. (p.Team and p.Team.Name or "None"))
+                            end
+                            if espHealth then
+                                table.insert(lines, '<font color="rgb(0,255,0)">HP: ' .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) .. '</font>')
+                            end
+                            if espWeapon then
+                                local tool = char:FindFirstChildOfClass("Tool")
+                                table.insert(lines, "Weapon: " .. (tool and tool.Name or "Hands"))
+                            end
+                            if espDistance then
+                                table.insert(lines, "[" .. math.floor(dist) .. "m]")
+                            end
+                            txtLabel.Text = table.concat(lines, "\n")
                         end
-                        if espWanted and isWanted then
-                            table.insert(lines, '<font color="rgb(255,255,0)">[WANTED]</font>')
-                        end
-                        if espTeam then
-                            table.insert(lines, "Team: " .. (p.Team and p.Team.Name or "None"))
-                        end
-                        if espHealth then
-                            table.insert(lines, '<font color="rgb(0,255,0)">HP: ' .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) .. '</font>')
-                        end
-                        if espWeapon then
-                            local tool = char:FindFirstChildOfClass("Tool")
-                            table.insert(lines, "Weapon: " .. (tool and tool.Name or "Hands"))
-                        end
-                        if espDistance then
-                            table.insert(lines, "[" .. math.floor(dist) .. "m]")
-                        end
-                        txtLabel.Text = table.concat(lines, "\n")
                     end
                 end
-            elseif bgui then
-                bgui.Enabled = false
             end
         end
     end
@@ -1128,7 +1103,7 @@ CombatSection:AddToggle({
 
 CombatSection:AddToggle({
     Name     = "Ignore Wanted Filter",
-    Default  = false,
+    Default  = true,
     Callback = function(state)
         SAIgnoreWanted = state
     end,
