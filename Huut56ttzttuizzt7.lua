@@ -7,6 +7,7 @@ local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Teams = game:GetService("Teams")
+local SoundService = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 
@@ -81,14 +82,18 @@ Window:AttachMenuIcon(MenuIcon)
 local antiDamageEnabled = false
 local speedBoostEnabled = false
 local playerFlyEnabled = false
+local spinbotEnabled = false
 local speedBoostValue = 1
 local playerFlySpeedValue = 50
+local spinbotSpeedValue = 50
 local isTeleporting = false
 local RadarFarmEnabled = false
 local AutoTaserEnabled = false
 local AutoTaserWallCheck = false
 
 local SilentAimEnabled = false
+local SilentAimKeybind = Enum.KeyCode.T
+local AutoShootEnabled = false
 local SAaimPart = "Head"
 local SAFovSize = 150
 local SAShowFOV = false
@@ -99,8 +104,149 @@ local SAWallCheck = false
 local SATeamCheck = false
 local SAIgnoreWanted = true
 local SAIgnoreUntouchable = false
+local SAMaxDistance = 15000
+
+local TriggerbotEnabled = false
+local TriggerbotKeybind = Enum.KeyCode.Y
+local TriggerbotWallCheck = false
+local TriggerbotTeamCheck = false
+local TriggerbotIgnoreUntouchable = false
+local TriggerbotIgnoreWanted = true
+local TriggerbotAimPart = "All"
+local TriggerbotMaxDistance = 15000
+
+local AimbotEnabled = false
+local AimbotActive = false
+local AimbotMobileActive = false
+local AimbotKeybind = Enum.KeyCode.E
+local AimbotAimPart = "Head"
+local AimbotSmoothness = 18
+local AimbotPrediction = false
+local AimbotPredictionValue = 0.165
+local AimbotSticky = false
+local AimbotWallCheck = false
+local AimbotTeamCheck = false
+local AimbotIgnoreUntouchable = false
+local AimbotIgnoreWanted = true
+local AimbotMaxDistance = 15000
+local currentAimbotTarget = nil
+
 local BulletTracersEnabled = false
 local TracerColor = Color3.fromRGB(255, 105, 180)
+
+local customHitsoundEnabled = false
+local selectedHitsound = "Neverlose"
+
+local hitsoundMap = {
+    ["Neverlose"] = "rbxassetid://139452805868562",
+    ["Hurt"]      = "rbxassetid://140721035016341",
+    ["Beamhit"]   = "rbxassetid://103134129110384",
+    ["Slash Hit"] = "rbxassetid://101804080457161"
+}
+
+local function applyHitsound()
+    if not customHitsoundEnabled then return end
+    local hitSound = SoundService:FindFirstChild("CrosshairHitmarker")
+    if not hitSound then
+        hitSound = ReplicatedStorage:FindFirstChild("CrosshairHitmarker")
+    end
+    if not hitSound then
+        hitSound = Instance.new("Sound")
+        hitSound.Name = "CrosshairHitmarker"
+        hitSound.Parent = SoundService
+    end
+    if hitsoundMap[selectedHitsound] then
+        hitSound.SoundId = hitsoundMap[selectedHitsound]
+    end
+end
+
+local customShootSoundEnabled = false
+local selectedShootSound = "Neverlose"
+local defaultShootSounds = {}
+
+local shootSoundMap = {
+    ["Neverlose"]    = "rbxassetid://139452805868562",
+    ["Minecraft"]    = "rbxassetid://135478009117226",
+    ["Click"]        = "rbxassetid://88442833509532",
+    ["Shotgun"]      = "rbxassetid://132711300701696",
+    ["Better Click"] = "rbxassetid://139403951941162"
+}
+
+local function applyShootSound()
+    pcall(function()
+        local code = ReplicatedStorage:WaitForChild("Code", 2)
+        if not code then return end
+        local assets = code:WaitForChild("assets", 2)
+        if not assets then return end
+        local soundsModule = assets:WaitForChild("sounds", 2)
+        if not soundsModule then return end
+
+        local rbxRequire = (getrenv and getrenv().require) or require
+        local sounds = rbxRequire(soundsModule)
+        if not sounds or not sounds.default then return end
+        local default = sounds.default
+
+        local shootSounds = {"PistolShoot","RifleShoot","ShotgunShoot","SniperShoot","DesertEagleShoot1","DesertEagleShoot2","DesertEagleShoot3","DesertEagleShoot4"}
+
+        if customShootSoundEnabled and shootSoundMap[selectedShootSound] then
+            local newId = shootSoundMap[selectedShootSound]
+            for _, name in ipairs(shootSounds) do
+                if default[name] then
+                    if not defaultShootSounds[name] then
+                        defaultShootSounds[name] = default[name].SoundId
+                    end
+                    default[name].SoundId = newId
+                end
+            end
+        else
+            for name, origId in pairs(defaultShootSounds) do
+                if default[name] then
+                    default[name].SoundId = origId
+                end
+            end
+        end
+    end)
+end
+
+local components = nil
+local AIM_CameraController = nil
+
+task.spawn(function()
+    pcall(function()
+        local code = ReplicatedStorage:WaitForChild("Code", 5)
+        if not code then return end
+        local rbxts = code:WaitForChild("rbxts_include", 5)
+        if not rbxts then return end
+        local node = rbxts:WaitForChild("node_modules", 5)
+        if not node then return end
+        local fwModule = node:WaitForChild("@flamework", 5)
+        if not fwModule then return end
+        local core = fwModule:WaitForChild("core", 5)
+        if not core then return end
+        local out = core:WaitForChild("out", 5)
+        if not out then return end
+        local flamework = require(out).Flamework
+        components = flamework.resolveDependency("$c:components@Components")
+        pcall(function()
+            AIM_CameraController = flamework.resolveDependency("$c:controllers/cameraController@CameraController")
+        end)
+    end)
+end)
+
+local function shootFirearm()
+    if not components then return end
+    local char = LP.Character
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool and tool:HasTag("Firearm Tool") then
+            local firearm = components:getComponent(tool, "Mgq")
+            if firearm and not firearm.reloading and (tool:GetAttribute("MagCurrentSize") or 1) > 0 then
+                firearm:shoot()
+                task.wait(tool:GetAttribute("ShootDelay") or 0.1)
+            end
+        end
+    end
+end
 
 local fovGui = Instance.new("ScreenGui")
 fovGui.Name = "FOVScreenGui"
@@ -142,6 +288,162 @@ targetHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
 targetHighlight.FillTransparency = 0.5
 targetHighlight.OutlineTransparency = 0
 
+local aimbotMobileGui = Instance.new("ScreenGui")
+aimbotMobileGui.Name = "AimbotMobileGui"
+aimbotMobileGui.ResetOnSpawn = false
+aimbotMobileGui.Enabled = false
+aimbotMobileGui.Parent = LP:WaitForChild("PlayerGui")
+
+local aimbotBtn = Instance.new("TextButton")
+aimbotBtn.Name = "AimbotButton"
+aimbotBtn.Size = UDim2.new(0, 75, 0, 75)
+aimbotBtn.Position = UDim2.new(0.8, 0, 0.55, 0)
+aimbotBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+aimbotBtn.BorderColor3 = Color3.fromRGB(255, 105, 180)
+aimbotBtn.BorderSizePixel = 2
+aimbotBtn.Text = "AIM: OFF"
+aimbotBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+aimbotBtn.TextSize = 13
+aimbotBtn.Font = Enum.Font.GothamBold
+aimbotBtn.Parent = aimbotMobileGui
+
+local aimbotBtnCorner = Instance.new("UICorner")
+aimbotBtnCorner.CornerRadius = UDim.new(0, 12)
+aimbotBtnCorner.Parent = aimbotBtn
+
+local aimDragging = false
+local aimDragStart, aimStartPos
+
+aimbotBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        aimDragging = true
+        aimDragStart = input.Position
+        aimStartPos = aimbotBtn.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                aimDragging = false
+            end
+        end)
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if aimDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - aimDragStart
+        aimbotBtn.Position = UDim2.new(aimStartPos.X.Scale, aimStartPos.X.Offset + delta.X, aimStartPos.Y.Scale, aimStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+aimbotBtn.MouseButton1Click:Connect(function()
+    AimbotMobileActive = not AimbotMobileActive
+    aimbotBtn.Text = AimbotMobileActive and "AIM: ON" or "AIM: OFF"
+    aimbotBtn.TextColor3 = AimbotMobileActive and Color3.fromRGB(255, 105, 180) or Color3.fromRGB(255, 255, 255)
+end)
+
+local silentAimMobileGui = Instance.new("ScreenGui")
+silentAimMobileGui.Name = "SilentAimMobileGui"
+silentAimMobileGui.ResetOnSpawn = false
+silentAimMobileGui.Enabled = false
+silentAimMobileGui.Parent = LP:WaitForChild("PlayerGui")
+
+local silentAimBtn = Instance.new("TextButton")
+silentAimBtn.Name = "SilentAimButton"
+silentAimBtn.Size = UDim2.new(0, 75, 0, 75)
+silentAimBtn.Position = UDim2.new(0.8, 0, 0.7, 0)
+silentAimBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+silentAimBtn.BorderColor3 = Color3.fromRGB(255, 105, 180)
+silentAimBtn.BorderSizePixel = 2
+silentAimBtn.Text = "SILENT: OFF"
+silentAimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+silentAimBtn.TextSize = 13
+silentAimBtn.Font = Enum.Font.GothamBold
+silentAimBtn.Parent = silentAimMobileGui
+
+local silentAimBtnCorner = Instance.new("UICorner")
+silentAimBtnCorner.CornerRadius = UDim.new(0, 12)
+silentAimBtnCorner.Parent = silentAimBtn
+
+local saDragging = false
+local saDragStart, saStartPos
+
+silentAimBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        saDragging = true
+        saDragStart = input.Position
+        saStartPos = silentAimBtn.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                saDragging = false
+            end
+        end)
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if saDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - saDragStart
+        silentAimBtn.Position = UDim2.new(saStartPos.X.Scale, saStartPos.X.Offset + delta.X, saStartPos.Y.Scale, saStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+silentAimBtn.MouseButton1Click:Connect(function()
+    SilentAimEnabled = not SilentAimEnabled
+    silentAimBtn.Text = SilentAimEnabled and "SILENT: ON" or "SILENT: OFF"
+    silentAimBtn.TextColor3 = SilentAimEnabled and Color3.fromRGB(255, 105, 180) or Color3.fromRGB(255, 255, 255)
+end)
+
+local triggerbotMobileGui = Instance.new("ScreenGui")
+triggerbotMobileGui.Name = "TriggerbotMobileGui"
+triggerbotMobileGui.ResetOnSpawn = false
+triggerbotMobileGui.Enabled = false
+triggerbotMobileGui.Parent = LP:WaitForChild("PlayerGui")
+
+local triggerbotBtn = Instance.new("TextButton")
+triggerbotBtn.Name = "TriggerbotButton"
+triggerbotBtn.Size = UDim2.new(0, 75, 0, 75)
+triggerbotBtn.Position = UDim2.new(0.8, 0, 0.85, 0)
+triggerbotBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+triggerbotBtn.BorderColor3 = Color3.fromRGB(255, 105, 180)
+triggerbotBtn.BorderSizePixel = 2
+triggerbotBtn.Text = "TRIG: OFF"
+triggerbotBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+triggerbotBtn.TextSize = 13
+triggerbotBtn.Font = Enum.Font.GothamBold
+triggerbotBtn.Parent = triggerbotMobileGui
+
+local triggerbotBtnCorner = Instance.new("UICorner")
+triggerbotBtnCorner.CornerRadius = UDim.new(0, 12)
+triggerbotBtnCorner.Parent = triggerbotBtn
+
+local tbDragging = false
+local tbDragStart, tbStartPos
+
+triggerbotBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tbDragging = true
+        tbDragStart = input.Position
+        tbStartPos = triggerbotBtn.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                tbDragging = false
+            end
+        end)
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if tbDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - tbDragStart
+        triggerbotBtn.Position = UDim2.new(tbStartPos.X.Scale, tbStartPos.X.Offset + delta.X, tbStartPos.Y.Scale, tbStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+triggerbotBtn.MouseButton1Click:Connect(function()
+    TriggerbotEnabled = not TriggerbotEnabled
+    triggerbotBtn.Text = TriggerbotEnabled and "TRIG: ON" or "TRIG: OFF"
+    triggerbotBtn.TextColor3 = TriggerbotEnabled and Color3.fromRGB(255, 105, 180) or Color3.fromRGB(255, 255, 255)
+end)
+
 local function isWantedPlayer(plr)
     if not plr or not plr.Character then return false end
     local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
@@ -158,6 +460,52 @@ local function isWantedPlayer(plr)
     return false
 end
 
+local function validateTarget(plr, partName, wallCheck, teamCheck, ignoreUntouchable, ignoreWanted)
+    if not plr or plr == LP or not plr.Character then return false end
+    local part = plr.Character:FindFirstChild(partName) or plr.Character:FindFirstChild("HumanoidRootPart")
+    local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    if not part or not hum or hum.Health <= 0 then return false end
+
+    local localTeam = LP.Team
+    local isPolice = localTeam and (localTeam.Name == "Police" or localTeam.Name == "Polizei")
+
+    if teamCheck and localTeam and plr.Team and localTeam == plr.Team then
+        return false
+    end
+
+    if ignoreUntouchable and plr.Team then
+        local tn = plr.Team.Name
+        if tn == "Prisoner" or tn == "TruckCompany" or tn == "HARS" or tn == "FireDepartment" or tn == "BusCompany" then
+            return false
+        end
+    end
+
+    if not ignoreWanted then
+        local targetIsWanted = isWantedPlayer(plr)
+        local targetIsPolice = plr.Team and (plr.Team.Name == "Police" or plr.Team.Name == "Polizei")
+        if isPolice then
+            if not targetIsWanted then return false end
+        else
+            if not targetIsWanted and not targetIsPolice then return false end
+        end
+    end
+
+    if wallCheck then
+        local cam = Workspace.CurrentCamera
+        if not cam then return false end
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        local bl = {LP.Character, plr.Character}
+        local vehiclesFolder = Workspace:FindFirstChild("Vehicles")
+        if vehiclesFolder then table.insert(bl, vehiclesFolder) end
+        rayParams.FilterDescendantsInstances = bl
+        local r = Workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, rayParams)
+        if r then return false end
+    end
+
+    return true
+end
+
 local function getClosestSATarget()
     local cam = Workspace.CurrentCamera
     if not cam then return nil, nil end
@@ -165,56 +513,18 @@ local function getClosestSATarget()
     local center = Vector2.new(vp.X / 2, vp.Y / 2)
     local bestDist, bestChar, bestScreen = SAFovSize, nil, nil
     if not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") then return nil, nil end
-    local localTeam = LP.Team
-    local isPolice = localTeam and (localTeam.Name == "Police" or localTeam.Name == "Polizei")
-
-    local rayParams
-    if SAWallCheck then
-        rayParams = RaycastParams.new()
-        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    end
 
     for _, plr in pairs(Players:GetPlayers()) do
-        if plr ~= LP and plr.Character then
+        if validateTarget(plr, SAaimPart, SAWallCheck, SATeamCheck, SAIgnoreUntouchable, SAIgnoreWanted) then
             local part = plr.Character:FindFirstChild(SAaimPart) or plr.Character:FindFirstChild("HumanoidRootPart")
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if part and hum and hum.Health > 0 then
-                local skip = false
-                if SATeamCheck and localTeam and plr.Team and localTeam == plr.Team then
-                    skip = true
-                end
-                if not skip and SAIgnoreUntouchable and plr.Team then
-                    local tn = plr.Team.Name
-                    if tn == "Prisoner" or tn == "TruckCompany" or tn == "HARS" or tn == "FireDepartment" or tn == "BusCompany" then
-                        skip = true
-                    end
-                end
-                if not skip and not SAIgnoreWanted then
-                    local targetIsWanted = isWantedPlayer(plr)
-                    local targetIsPolice = plr.Team and (plr.Team.Name == "Police" or plr.Team.Name == "Polizei")
-                    if isPolice then
-                        if not targetIsWanted then skip = true end
-                    else
-                        if not targetIsWanted and not targetIsPolice then skip = true end
-                    end
-                end
-                if not skip and SAWallCheck and rayParams then
-                    local bl = {LP.Character, plr.Character}
-                    local vehiclesFolder = Workspace:FindFirstChild("Vehicles")
-                    if vehiclesFolder then table.insert(bl, vehiclesFolder) end
-                    rayParams.FilterDescendantsInstances = bl
-                    local r = Workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, rayParams)
-                    if r then skip = true end
-                end
-                if not skip then
-                    local sp, onScreen = cam:WorldToViewportPoint(part.Position)
-                    if onScreen and sp.Z > 0 then
-                        local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                        if sd <= bestDist then
-                            bestDist = sd
-                            bestChar = plr.Character
-                            bestScreen = Vector2.new(sp.X, sp.Y)
-                        end
+            if (part.Position - cam.CFrame.Position).Magnitude <= SAMaxDistance then
+                local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+                if onScreen and sp.Z > 0 then
+                    local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                    if sd <= bestDist then
+                        bestDist = sd
+                        bestChar = plr.Character
+                        bestScreen = Vector2.new(sp.X, sp.Y)
                     end
                 end
             end
@@ -223,7 +533,104 @@ local function getClosestSATarget()
     return bestChar, bestScreen
 end
 
-RunService.RenderStepped:Connect(function()
+local function getClosestAimbotTarget()
+    local cam = Workspace.CurrentCamera
+    if not cam then return nil end
+    local vp = cam.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+    local bestDist, bestPlr = SAFovSize, nil
+
+    for _, plr in pairs(Players:GetPlayers()) do
+        if validateTarget(plr, AimbotAimPart, AimbotWallCheck, AimbotTeamCheck, AimbotIgnoreUntouchable, AimbotIgnoreWanted) then
+            local part = plr.Character:FindFirstChild(AimbotAimPart) or plr.Character:FindFirstChild("HumanoidRootPart")
+            if (part.Position - cam.CFrame.Position).Magnitude <= AimbotMaxDistance then
+                local sp, onScreen = cam:WorldToViewportPoint(part.Position)
+                if onScreen and sp.Z > 0 then
+                    local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                    if sd <= bestDist then
+                        bestDist = sd
+                        bestPlr = plr
+                    end
+                end
+            end
+        end
+    end
+    return bestPlr
+end
+
+local function getTriggerbotTarget()
+    local cam = Workspace.CurrentCamera
+    if not cam then return nil end
+    local mousePos = UIS:GetMouseLocation()
+    local ray = cam:ViewportPointToRay(mousePos.X, mousePos.Y)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local filter = {LP.Character}
+    local vehiclesFolder = Workspace:FindFirstChild("Vehicles")
+    if vehiclesFolder then table.insert(filter, vehiclesFolder) end
+    rayParams.FilterDescendantsInstances = filter
+
+    local result = Workspace:Raycast(ray.Origin, ray.Direction * TriggerbotMaxDistance, rayParams)
+    if result and result.Instance then
+        if TriggerbotAimPart ~= "All" and result.Instance.Name ~= TriggerbotAimPart then return nil end
+        local model = result.Instance:FindFirstAncestorOfClass("Model")
+        if model then
+            local plr = Players:GetPlayerFromCharacter(model)
+            if plr and validateTarget(plr, "HumanoidRootPart", TriggerbotWallCheck, TriggerbotTeamCheck, TriggerbotIgnoreUntouchable, TriggerbotIgnoreWanted) then
+                return model
+            end
+        end
+    end
+    return nil
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if AutoShootEnabled and SilentAimEnabled then
+            local targetChar, _ = getClosestSATarget()
+            if targetChar then
+                shootFirearm()
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if TriggerbotEnabled then
+            local target = getTriggerbotTarget()
+            if target then
+                shootFirearm()
+            end
+        end
+    end
+end)
+
+UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == AimbotKeybind or input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimbotActive = true
+    elseif input.KeyCode == SilentAimKeybind then
+        SilentAimEnabled = not SilentAimEnabled
+        silentAimBtn.Text = SilentAimEnabled and "SILENT: ON" or "SILENT: OFF"
+        silentAimBtn.TextColor3 = SilentAimEnabled and Color3.fromRGB(255, 105, 180) or Color3.fromRGB(255, 255, 255)
+    elseif input.KeyCode == TriggerbotKeybind then
+        TriggerbotEnabled = not TriggerbotEnabled
+        triggerbotBtn.Text = TriggerbotEnabled and "TRIG: ON" or "TRIG: OFF"
+        triggerbotBtn.TextColor3 = TriggerbotEnabled and Color3.fromRGB(255, 105, 180) or Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+UIS.InputEnded:Connect(function(input, gp)
+    if input.KeyCode == AimbotKeybind or input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimbotActive = false
+        currentAimbotTarget = nil
+    end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
     local cam = Workspace.CurrentCamera
     if cam then
         local vp = cam.ViewportSize
@@ -265,6 +672,39 @@ RunService.RenderStepped:Connect(function()
         targetHighlight.Enabled = false
         targetHighlight.Parent = nil
         snapline.Visible = false
+    end
+
+    if AimbotEnabled and (AimbotActive or AimbotMobileActive) and cam then
+        local targetPlr = nil
+        if AimbotSticky and currentAimbotTarget and validateTarget(currentAimbotTarget, AimbotAimPart, AimbotWallCheck, AimbotTeamCheck, AimbotIgnoreUntouchable, AimbotIgnoreWanted) then
+            targetPlr = currentAimbotTarget
+        else
+            targetPlr = getClosestAimbotTarget()
+            currentAimbotTarget = targetPlr
+        end
+
+        if targetPlr and targetPlr.Character then
+            local part = targetPlr.Character:FindFirstChild(AimbotAimPart) or targetPlr.Character:FindFirstChild("HumanoidRootPart")
+            if part then
+                local targetPos = part.Position
+                if AimbotPrediction and part:IsA("BasePart") then
+                    targetPos = targetPos + (part.AssemblyLinearVelocity * AimbotPredictionValue)
+                end
+
+                local lookAt = CFrame.new(cam.CFrame.Position, targetPos)
+                local alpha = math.clamp((AimbotSmoothness / 100) * math.max(dt * 60, 0.25), 0.01, 1)
+
+                pcall(function()
+                    if AIM_CameraController and typeof(AIM_CameraController.MimicRotation) == "function" then
+                        AIM_CameraController:MimicRotation(cam.CFrame:Lerp(lookAt, alpha))
+                    else
+                        cam.CFrame = cam.CFrame:Lerp(lookAt, alpha)
+                    end
+                end)
+            end
+        end
+    else
+        currentAimbotTarget = nil
     end
 end)
 
@@ -380,6 +820,13 @@ RunService.Heartbeat:Connect(function()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hum or not hrp then return end
 
+    if spinbotEnabled then
+        hum.AutoRotate = false
+        hrp.AssemblyAngularVelocity = Vector3.new(0, spinbotSpeedValue, 0)
+    else
+        hum.AutoRotate = true
+    end
+
     if antiDamageEnabled or isTeleporting then
         if hum:GetState() == Enum.HumanoidStateType.Freefall or hrp.AssemblyLinearVelocity.Y < 0 then
             if hrp.AssemblyLinearVelocity.Y < -8 then
@@ -389,33 +836,41 @@ RunService.Heartbeat:Connect(function()
     end
 
     if playerFlyEnabled then
+        hum.PlatformStand = true
         local cam = Workspace.CurrentCamera
-        if not cam then return end
-        local moveDir = hum.MoveDirection
-        if moveDir.Magnitude > 0 then
-            local camCF = cam.CFrame
-            local flatLook = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
-            local flatRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+        if cam then
+            hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + cam.CFrame.LookVector)
+            local moveDir = hum.MoveDirection
+            if moveDir.Magnitude > 0 then
+                local camCF = cam.CFrame
+                local flatLook = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+                local flatRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
 
-            if flatLook.Magnitude > 0 then flatLook = flatLook.Unit end
-            if flatRight.Magnitude > 0 then flatRight = flatRight.Unit end
+                if flatLook.Magnitude > 0 then flatLook = flatLook.Unit end
+                if flatRight.Magnitude > 0 then flatRight = flatRight.Unit end
 
-            local fwd = moveDir:Dot(flatLook)
-            local side = moveDir:Dot(flatRight)
+                local fwd = moveDir:Dot(flatLook)
+                local side = moveDir:Dot(flatRight)
 
-            local finalDir = (camCF.LookVector * fwd) + (camCF.RightVector * side)
-            if finalDir.Magnitude > 0 then
-                finalDir = finalDir.Unit
+                local finalDir = (camCF.LookVector * fwd) + (camCF.RightVector * side)
+                if finalDir.Magnitude > 0 then
+                    finalDir = finalDir.Unit
+                end
+                hrp.AssemblyLinearVelocity = finalDir * playerFlySpeedValue
+            else
+                hrp.AssemblyLinearVelocity = Vector3.zero
             end
-            hrp.AssemblyLinearVelocity = finalDir * playerFlySpeedValue
-        else
-            hrp.AssemblyLinearVelocity = Vector3.zero
         end
-    elseif speedBoostEnabled then
-        if hum.MoveDirection.Magnitude > 0 then
-            local speed = 16 + (speedBoostValue * 5)
-            local targetVel = hum.MoveDirection * speed
-            hrp.AssemblyLinearVelocity = Vector3.new(targetVel.X, hrp.AssemblyLinearVelocity.Y, targetVel.Z)
+    else
+        if hum.PlatformStand then
+            hum.PlatformStand = false
+        end
+        if speedBoostEnabled then
+            if hum.MoveDirection.Magnitude > 0 then
+                local speed = 16 + (speedBoostValue * 5)
+                local targetVel = hum.MoveDirection * speed
+                hrp.AssemblyLinearVelocity = Vector3.new(targetVel.X, hrp.AssemblyLinearVelocity.Y, targetVel.Z)
+            end
         end
     end
 end)
@@ -1045,9 +1500,155 @@ PlayerSection:AddSlider({
     end,
 })
 
+PlayerSection:AddToggle({
+    Name    = "Spinbot",
+    Default = false,
+    Callback = function(state)
+        spinbotEnabled = state
+    end,
+})
+
+PlayerSection:AddSlider({
+    Name     = "Spinbot Speed",
+    Min      = 10,
+    Max      = 200,
+    Default  = 50,
+    Precision = 0,
+    Callback = function(v)
+        spinbotSpeedValue = v
+    end,
+})
+
 local CombatTab = Window:AddTab({ Name = "Combat", Icon = "swords" })
 
-local CombatSection = CombatTab:AddSection({
+local CameraAimbotSection = CombatTab:AddSection({
+    Name           = "CAMERA AIMBOT",
+    Position       = "Left",
+    Collapsible    = false,
+    Collapsed      = false,
+    Box            = false,
+    Icon           = nil,
+    IconColor      = Color3.fromRGB(223, 223, 223),
+    TextSize       = 11,
+    TextXAlignment = "Left",
+    SearchFilter   = false,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Enable Aimbot",
+    Default  = false,
+    Callback = function(state)
+        AimbotEnabled = state
+    end,
+})
+
+CameraAimbotSection:AddKeybind({
+    Name     = "Aimbot Keybind",
+    Default  = Enum.KeyCode.E,
+    Callback = function(key)
+        AimbotKeybind = key
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Mobile Aimbot Button",
+    Default  = false,
+    Callback = function(state)
+        aimbotMobileGui.Enabled = state
+    end,
+})
+
+CameraAimbotSection:AddDropdown({
+    Name     = "Aimbot Aim Part",
+    Values   = {"Head", "HumanoidRootPart"},
+    Default  = "Head",
+    Callback = function(val)
+        AimbotAimPart = val
+    end,
+})
+
+CameraAimbotSection:AddSlider({
+    Name     = "Smoothness",
+    Min      = 1,
+    Max      = 100,
+    Default  = 18,
+    Precision = 0,
+    Callback = function(v)
+        AimbotSmoothness = v
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Prediction",
+    Default  = false,
+    Callback = function(state)
+        AimbotPrediction = state
+    end,
+})
+
+CameraAimbotSection:AddSlider({
+    Name     = "Prediction Velocity",
+    Min      = 0,
+    Max      = 1,
+    Default  = 0.165,
+    Precision = 3,
+    Callback = function(v)
+        AimbotPredictionValue = v
+    end,
+})
+
+CameraAimbotSection:AddSlider({
+    Name     = "Max Distance",
+    Min      = 10,
+    Max      = 15000,
+    Default  = 15000,
+    Precision = 0,
+    Callback = function(v)
+        AimbotMaxDistance = v
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Sticky Aim",
+    Default  = false,
+    Callback = function(state)
+        AimbotSticky = state
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Aimbot Wall Check",
+    Default  = false,
+    Callback = function(state)
+        AimbotWallCheck = state
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Aimbot Team Check",
+    Default  = false,
+    Callback = function(state)
+        AimbotTeamCheck = state
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Aimbot Ignore Untouchable",
+    Default  = false,
+    Callback = function(state)
+        AimbotIgnoreUntouchable = state
+    end,
+})
+
+CameraAimbotSection:AddToggle({
+    Name     = "Aimbot Ignore Wanted Filter",
+    Default  = true,
+    Callback = function(state)
+        AimbotIgnoreWanted = state
+    end,
+})
+
+local SilentAimSection = CombatTab:AddSection({
     Name           = "SILENT AIM",
     Position       = "Left",
     Collapsible    = false,
@@ -1060,7 +1661,7 @@ local CombatSection = CombatTab:AddSection({
     SearchFilter   = false,
 })
 
-CombatSection:AddToggle({
+SilentAimSection:AddToggle({
     Name     = "Silent Aim",
     Default  = false,
     Callback = function(state)
@@ -1068,7 +1669,31 @@ CombatSection:AddToggle({
     end,
 })
 
-CombatSection:AddDropdown({
+SilentAimSection:AddKeybind({
+    Name     = "Silent Aim Keybind",
+    Default  = Enum.KeyCode.T,
+    Callback = function(key)
+        SilentAimKeybind = key
+    end,
+})
+
+SilentAimSection:AddToggle({
+    Name     = "Mobile Silent Aim Button",
+    Default  = false,
+    Callback = function(state)
+        silentAimMobileGui.Enabled = state
+    end,
+})
+
+SilentAimSection:AddToggle({
+    Name     = "Auto Shoot",
+    Default  = false,
+    Callback = function(state)
+        AutoShootEnabled = state
+    end,
+})
+
+SilentAimSection:AddDropdown({
     Name     = "Aim Part",
     Values   = {"Head", "HumanoidRootPart"},
     Default  = "Head",
@@ -1077,7 +1702,18 @@ CombatSection:AddDropdown({
     end,
 })
 
-CombatSection:AddToggle({
+SilentAimSection:AddSlider({
+    Name     = "Max Distance",
+    Min      = 10,
+    Max      = 15000,
+    Default  = 15000,
+    Precision = 0,
+    Callback = function(v)
+        SAMaxDistance = v
+    end,
+})
+
+SilentAimSection:AddToggle({
     Name     = "Wall Check",
     Default  = false,
     Callback = function(state)
@@ -1085,7 +1721,7 @@ CombatSection:AddToggle({
     end,
 })
 
-CombatSection:AddToggle({
+SilentAimSection:AddToggle({
     Name     = "Team Check",
     Default  = false,
     Callback = function(state)
@@ -1093,7 +1729,7 @@ CombatSection:AddToggle({
     end,
 })
 
-CombatSection:AddToggle({
+SilentAimSection:AddToggle({
     Name     = "Ignore Untouchable Teams",
     Default  = false,
     Callback = function(state)
@@ -1101,11 +1737,100 @@ CombatSection:AddToggle({
     end,
 })
 
-CombatSection:AddToggle({
+SilentAimSection:AddToggle({
     Name     = "Ignore Wanted Filter",
     Default  = true,
     Callback = function(state)
         SAIgnoreWanted = state
+    end,
+})
+
+local TriggerbotSection = CombatTab:AddSection({
+    Name           = "TRIGGERBOT",
+    Position       = "Right",
+    Collapsible    = false,
+    Collapsed      = false,
+    Box            = false,
+    Icon           = nil,
+    IconColor      = Color3.fromRGB(223, 223, 223),
+    TextSize       = 11,
+    TextXAlignment = "Left",
+    SearchFilter   = false,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Triggerbot",
+    Default  = false,
+    Callback = function(state)
+        TriggerbotEnabled = state
+    end,
+})
+
+TriggerbotSection:AddKeybind({
+    Name     = "Triggerbot Keybind",
+    Default  = Enum.KeyCode.Y,
+    Callback = function(key)
+        TriggerbotKeybind = key
+    end,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Mobile Triggerbot Button",
+    Default  = false,
+    Callback = function(state)
+        triggerbotMobileGui.Enabled = state
+    end,
+})
+
+TriggerbotSection:AddDropdown({
+    Name     = "Aim Part",
+    Values   = {"Head", "HumanoidRootPart", "All"},
+    Default  = "All",
+    Callback = function(val)
+        TriggerbotAimPart = val
+    end,
+})
+
+TriggerbotSection:AddSlider({
+    Name     = "Max Distance",
+    Min      = 10,
+    Max      = 15000,
+    Default  = 15000,
+    Precision = 0,
+    Callback = function(v)
+        TriggerbotMaxDistance = v
+    end,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Triggerbot Wall Check",
+    Default  = false,
+    Callback = function(state)
+        TriggerbotWallCheck = state
+    end,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Triggerbot Team Check",
+    Default  = false,
+    Callback = function(state)
+        TriggerbotTeamCheck = state
+    end,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Triggerbot Ignore Untouchable",
+    Default  = false,
+    Callback = function(state)
+        TriggerbotIgnoreUntouchable = state
+    end,
+})
+
+TriggerbotSection:AddToggle({
+    Name     = "Triggerbot Ignore Wanted Filter",
+    Default  = true,
+    Callback = function(state)
+        TriggerbotIgnoreWanted = state
     end,
 })
 
@@ -1162,6 +1887,65 @@ FOVSection:AddToggle({
     Default  = false,
     Callback = function(state)
         SASnapline = state
+    end,
+})
+
+local GunTab = Window:AddTab({ Name = "Gun", Icon = "crosshair" })
+
+local GunSoundSection = GunTab:AddSection({
+    Name           = "CUSTOM SOUNDS",
+    Position       = "Left",
+    Collapsible    = false,
+    Collapsed      = false,
+    Box            = false,
+    Icon           = nil,
+    IconColor      = Color3.fromRGB(223, 223, 223),
+    TextSize       = 11,
+    TextXAlignment = "Left",
+    SearchFilter   = false,
+})
+
+GunSoundSection:AddToggle({
+    Name     = "Enable Custom Hitsound",
+    Default  = false,
+    Callback = function(state)
+        customHitsoundEnabled = state
+        if state then
+            applyHitsound()
+        end
+    end,
+})
+
+GunSoundSection:AddDropdown({
+    Name     = "Custom Hitsound",
+    Values   = {"Neverlose", "Hurt", "Beamhit", "Slash Hit"},
+    Default  = "Neverlose",
+    Callback = function(val)
+        selectedHitsound = val
+        if customHitsoundEnabled then
+            applyHitsound()
+        end
+    end,
+})
+
+GunSoundSection:AddToggle({
+    Name     = "Enable Custom Shoot Sound",
+    Default  = false,
+    Callback = function(state)
+        customShootSoundEnabled = state
+        applyShootSound()
+    end,
+})
+
+GunSoundSection:AddDropdown({
+    Name     = "Custom Shoot Sound",
+    Values   = {"Neverlose", "Minecraft", "Click", "Shotgun", "Better Click"},
+    Default  = "Neverlose",
+    Callback = function(val)
+        selectedShootSound = val
+        if customShootSoundEnabled then
+            applyShootSound()
+        end
     end,
 })
 
